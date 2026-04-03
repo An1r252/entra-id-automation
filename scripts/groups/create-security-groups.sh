@@ -7,7 +7,7 @@
 #           https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
 # ============================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # ── Group definitions ────────────────────────────────────────
 # Format: "DisplayName|Description|OwnerUPN"
@@ -25,9 +25,35 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; RESET='\033[0m'
 # ─────────────────────────────────────────────────────────────
 
+# ── Log file setup ───────────────────────────────────────────
+LOG_DIR="$(dirname "$0")/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/create-security-groups-$(date +%Y%m%d-%H%M%S).log"
+# ─────────────────────────────────────────────────────────────
+
+# ── Logging helper ───────────────────────────────────────────
+log() {
+  local LEVEL="$1"
+  local MSG="$2"
+  local TIMESTAMP
+  TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[$TIMESTAMP] [$LEVEL] $MSG" >> "$LOG_FILE"
+}
+# ─────────────────────────────────────────────────────────────
+
 echo -e "\n${CYAN}[AUTH] Logging in to Azure...${RESET}"
-az login --use-device-code --allow-no-subscriptions
-echo -e "${GREEN}[AUTH] Logged in.${RESET}\n"
+log "INFO" "Script started"
+log "INFO" "Logging in to Azure..."
+
+if ! az login --use-device-code --allow-no-subscriptions; then
+  echo -e "${RED}[AUTH] Login failed. Exiting.${RESET}"
+  log "ERROR" "Azure login failed. Exiting."
+  exit 1
+fi
+
+SIGNED_IN_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || echo "unknown")
+echo -e "${GREEN}[AUTH] Logged in as: ${SIGNED_IN_UPN}${RESET}\n"
+log "INFO" "Logged in as: ${SIGNED_IN_UPN}"
 
 # Counters
 CREATED=0; SKIPPED=0; FAILED=0
@@ -35,48 +61,75 @@ CREATED=0; SKIPPED=0; FAILED=0
 for ENTRY in "${GROUPS[@]}"; do
   IFS='|' read -r DISPLAY_NAME DESCRIPTION OWNER_UPN <<< "$ENTRY"
 
+  echo -e "\n${CYAN}[PROCESSING] ${DISPLAY_NAME}${RESET}"
+  log "INFO" "Processing group: ${DISPLAY_NAME} | Description: ${DESCRIPTION} | Owner: ${OWNER_UPN}"
+
   # Derive a mail nickname (alphanumeric only)
   MAIL_NICK=$(echo "$DISPLAY_NAME" | tr -dc '[:alnum:]')
-
-  printf "[CREATE] %-40s" "$DISPLAY_NAME ..."
+  log "INFO" "  Mail nickname: ${MAIL_NICK}"
 
   # Check if group already exists
+  echo -e "  Checking if group already exists..."
+  log "INFO" "  Checking if group already exists..."
   EXISTING_ID=$(az ad group list \
     --filter "displayName eq '${DISPLAY_NAME}'" \
     --query "[0].id" -o tsv 2>/dev/null || true)
 
   if [[ -n "$EXISTING_ID" ]]; then
-    echo -e " ${YELLOW}SKIPPED (already exists: ${EXISTING_ID})${RESET}"
+    echo -e "  ${YELLOW}SKIPPED — group already exists (Id: ${EXISTING_ID})${RESET}"
+    log "WARN" "  SKIPPED — group already exists (Id: ${EXISTING_ID})"
     (( SKIPPED++ )) || true
     continue
   fi
 
+  log "INFO" "  Group does not exist, proceeding with creation."
+
   # Resolve owner UPN to Object ID
+  echo -e "  Resolving owner: ${OWNER_UPN}..."
+  log "INFO" "  Resolving owner UPN: ${OWNER_UPN}"
   OWNER_ID=$(az ad user show --id "$OWNER_UPN" --query id -o tsv 2>/dev/null || true)
+
   if [[ -z "$OWNER_ID" ]]; then
-    echo -e " ${RED}FAILED (owner not found: ${OWNER_UPN})${RESET}"
+    echo -e "  ${RED}FAILED — owner not found: ${OWNER_UPN}${RESET}"
+    log "ERROR" "  FAILED — owner not found: ${OWNER_UPN}"
     (( FAILED++ )) || true
     continue
   fi
 
+  echo -e "  Owner resolved (ObjectId: ${OWNER_ID})"
+  log "INFO" "  Owner resolved (ObjectId: ${OWNER_ID})"
+
   # Create the security group
-  if GROUP_ID=$(az ad group create \
-        --display-name "$DISPLAY_NAME" \
-        --mail-nickname "$MAIL_NICK" \
-        --description "$DESCRIPTION" \
-        --query id -o tsv 2>&1); then
+  echo -e "  Creating group..."
+  log "INFO" "  Creating group: ${DISPLAY_NAME}"
+  GROUP_ID=$(az ad group create \
+    --display-name "$DISPLAY_NAME" \
+    --mail-nickname "$MAIL_NICK" \
+    --description "$DESCRIPTION" \
+    --query id -o tsv 2>&1) && CREATED_OK=true || CREATED_OK=false
+
+  if [[ "$CREATED_OK" == "true" ]]; then
+    echo -e "  Group created (Id: ${GROUP_ID})"
+    log "INFO" "  Group created (Id: ${GROUP_ID})"
 
     # Set the specified user as owner
-    az ad group owner add \
-      --group "$GROUP_ID" \
-      --owner-object-id "$OWNER_ID" \
-      --only-show-errors
-
-    echo -e " ${GREEN}CREATED (Id: ${GROUP_ID}  Owner: ${OWNER_UPN})${RESET}"
+    echo -e "  Assigning owner: ${OWNER_UPN}..."
+    log "INFO" "  Assigning owner (ObjectId: ${OWNER_ID}) to group (Id: ${GROUP_ID})"
+    if az ad group owner add \
+        --group "$GROUP_ID" \
+        --owner-object-id "$OWNER_ID" \
+        --only-show-errors; then
+      echo -e "  ${GREEN}SUCCESS — Created and owner assigned (Owner: ${OWNER_UPN})${RESET}"
+      log "INFO" "  SUCCESS — owner assigned successfully"
+    else
+      echo -e "  ${YELLOW}WARNING — Group created but owner assignment failed${RESET}"
+      log "WARN" "  WARNING — Group created but owner assignment failed"
+    fi
     (( CREATED++ )) || true
   else
-    echo -e " ${RED}FAILED${RESET}"
+    echo -e "  ${RED}FAILED — could not create group${RESET}"
     echo -e "  ${RED}Error: ${GROUP_ID}${RESET}"
+    log "ERROR" "  FAILED — could not create group. Error: ${GROUP_ID}"
     (( FAILED++ )) || true
   fi
 
@@ -84,12 +137,17 @@ done
 
 # Summary
 echo ""
-echo "── Summary ──────────────────────────────────────────────"
+echo    "── Summary ──────────────────────────────────────────────"
 echo -e "  ${GREEN}Created : ${CREATED}${RESET}"
 echo -e "  ${YELLOW}Skipped : ${SKIPPED}${RESET}"
 echo -e "  ${RED}Failed  : ${FAILED}${RESET}"
 echo ""
+echo -e "  Log file: ${LOG_FILE}"
+echo    "─────────────────────────────────────────────────────────"
+
+log "INFO" "Script completed — Created: ${CREATED} | Skipped: ${SKIPPED} | Failed: ${FAILED}"
 
 # Sign out
 az logout
 echo -e "${CYAN}[AUTH] Logged out.${RESET}\n"
+log "INFO" "Logged out of Azure."
