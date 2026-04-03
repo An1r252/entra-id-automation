@@ -1,7 +1,7 @@
 # ============================================================
 # Create-SecurityGroups.ps1
-# Creates Entra ID Security Groups and sets the logged-in
-# user as the owner of each group.
+# Creates Entra ID Security Groups and sets a specified user
+# as the owner of each group.
 # Requires: Microsoft.Graph PowerShell SDK
 #   Install: Install-Module Microsoft.Graph -Scope CurrentUser
 # ============================================================
@@ -10,26 +10,22 @@
 
 # ── Group definitions ────────────────────────────────────────
 # Edit this list before running.
+# Owner: UPN of the user to assign as group owner (e.g. john@contoso.com)
 $Groups = @(
-    @{ DisplayName = "SG-AppTeam-Dev";        Description = "App team developers" }
-    @{ DisplayName = "SG-AppTeam-Prod";       Description = "App team production access" }
-    @{ DisplayName = "SG-CloudOps-Admins";    Description = "Cloud operations administrators" }
-    @{ DisplayName = "SG-Security-Analysts";  Description = "Security analyst team" }
+    @{ DisplayName = "SG-AppTeam-Dev";        Description = "App team developers";             Owner = "owner1@contoso.com" }
+    @{ DisplayName = "SG-AppTeam-Prod";       Description = "App team production access";      Owner = "owner1@contoso.com" }
+    @{ DisplayName = "SG-CloudOps-Admins";    Description = "Cloud operations administrators"; Owner = "owner2@contoso.com" }
+    @{ DisplayName = "SG-Security-Analysts";  Description = "Security analyst team";           Owner = "owner2@contoso.com" }
 )
 # ─────────────────────────────────────────────────────────────
 
 # 1. Login — opens browser for interactive auth
 Write-Host "`n[AUTH] Connecting to Microsoft Graph..." -ForegroundColor Cyan
-Connect-MgGraph -Scopes "Group.ReadWrite.All", "User.Read" -NoWelcome
+Connect-MgGraph -Scopes "Group.ReadWrite.All", "User.Read.All" -NoWelcome
 
-# 2. Resolve the signed-in user's object ID
-$Me = Get-MgContext
-$CurrentUser = Get-MgUser -UserId $Me.Account
-$OwnerId = $CurrentUser.Id
+Write-Host "[AUTH] Connected.`n" -ForegroundColor Green
 
-Write-Host "[AUTH] Signed in as: $($Me.Account)  (ObjectId: $OwnerId)`n" -ForegroundColor Green
-
-# 3. Create each group
+# 2. Create each group
 $Results = @()
 
 foreach ($G in $Groups) {
@@ -40,7 +36,17 @@ foreach ($G in $Groups) {
     $Existing = Get-MgGroup -Filter "displayName eq '$($G.DisplayName)'" -ErrorAction SilentlyContinue
     if ($Existing) {
         Write-Host " SKIPPED (already exists)" -ForegroundColor Yellow
-        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Skipped - already exists"; Id = $Existing.Id }
+        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Skipped - already exists"; Id = $Existing.Id; Owner = $G.Owner }
+        continue
+    }
+
+    # Resolve owner UPN to Object ID
+    try {
+        $OwnerUser = Get-MgUser -UserId $G.Owner -ErrorAction Stop
+        $OwnerId = $OwnerUser.Id
+    } catch {
+        Write-Host " FAILED (owner not found: $($G.Owner))" -ForegroundColor Red
+        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Failed: Owner not found"; Id = $null; Owner = $G.Owner }
         continue
     }
 
@@ -55,20 +61,20 @@ foreach ($G in $Groups) {
             "owners@odata.bind" = @("https://graph.microsoft.com/v1.0/users/$OwnerId")
         }
 
-        Write-Host " CREATED (Id: $($NewGroup.Id))" -ForegroundColor Green
-        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Created"; Id = $NewGroup.Id }
+        Write-Host " CREATED (Id: $($NewGroup.Id)  Owner: $($G.Owner))" -ForegroundColor Green
+        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Created"; Id = $NewGroup.Id; Owner = $G.Owner }
 
     } catch {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Host "  Error: $_" -ForegroundColor Red
-        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Failed: $_"; Id = $null }
+        $Results += [PSCustomObject]@{ Group = $G.DisplayName; Status = "Failed: $_"; Id = $null; Owner = $G.Owner }
     }
 }
 
-# 4. Summary
+# 3. Summary
 Write-Host "`n── Summary ──────────────────────────────────────────────"
 $Results | Format-Table -AutoSize
 
-# 5. Disconnect
+# 4. Disconnect
 Disconnect-MgGraph | Out-Null
 Write-Host "[AUTH] Disconnected.`n" -ForegroundColor Cyan

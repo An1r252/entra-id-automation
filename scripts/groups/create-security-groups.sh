@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
 # create-security-groups.sh
-# Creates Entra ID Security Groups via Azure CLI and sets the
-# logged-in user as the owner of each group.
+# Creates Entra ID Security Groups via Azure CLI and sets a
+# specified user as the owner of each group.
 # Requires: azure-cli  (brew install azure-cli  OR
 #           https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
 # ============================================================
@@ -10,13 +10,13 @@
 set -euo pipefail
 
 # ── Group definitions ────────────────────────────────────────
-# Format: "DisplayName|Description"
-# Replace dummy names/descriptions with real values before running.
+# Format: "DisplayName|Description|OwnerUPN"
+# Replace values before running.
 GROUPS=(
-  "AZ-APP-BXTY-GROUP1|Baxterity Group 1 Users"
-  "AZ-APP-BXTY-GROUP2|Baxterity Group 2 Users"
-  "AZ-APP-BXTY-GROUP3|Baxterity Group 3 Users"
-  "AZ-APP-BXTY-GROUP4|Baxterity Group 4 Users"
+  "AZ-APP-BXTY-GROUP1|Baxterity Group 1 Users|owner1@contoso.com"
+  "AZ-APP-BXTY-GROUP2|Baxterity Group 2 Users|owner1@contoso.com"
+  "AZ-APP-BXTY-GROUP3|Baxterity Group 3 Users|owner2@contoso.com"
+  "AZ-APP-BXTY-GROUP4|Baxterity Group 4 Users|owner2@contoso.com"
 )
 # ─────────────────────────────────────────────────────────────
 
@@ -27,17 +27,13 @@ CYAN='\033[0;36m'; RESET='\033[0m'
 
 echo -e "\n${CYAN}[AUTH] Logging in to Azure...${RESET}"
 az login --use-device-code --allow-no-subscriptions
-
-# Resolve signed-in user's object ID
-OWNER_ID=$(az ad signed-in-user show --query id -o tsv)
-UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv)
-echo -e "${GREEN}[AUTH] Signed in as: ${UPN}  (ObjectId: ${OWNER_ID})${RESET}\n"
+echo -e "${GREEN}[AUTH] Logged in.${RESET}\n"
 
 # Counters
 CREATED=0; SKIPPED=0; FAILED=0
 
 for ENTRY in "${GROUPS[@]}"; do
-  IFS='|' read -r DISPLAY_NAME DESCRIPTION <<< "$ENTRY"
+  IFS='|' read -r DISPLAY_NAME DESCRIPTION OWNER_UPN <<< "$ENTRY"
 
   # Derive a mail nickname (alphanumeric only)
   MAIL_NICK=$(echo "$DISPLAY_NAME" | tr -dc '[:alnum:]')
@@ -55,6 +51,14 @@ for ENTRY in "${GROUPS[@]}"; do
     continue
   fi
 
+  # Resolve owner UPN to Object ID
+  OWNER_ID=$(az ad user show --id "$OWNER_UPN" --query id -o tsv 2>/dev/null || true)
+  if [[ -z "$OWNER_ID" ]]; then
+    echo -e " ${RED}FAILED (owner not found: ${OWNER_UPN})${RESET}"
+    (( FAILED++ )) || true
+    continue
+  fi
+
   # Create the security group
   if GROUP_ID=$(az ad group create \
         --display-name "$DISPLAY_NAME" \
@@ -62,13 +66,13 @@ for ENTRY in "${GROUPS[@]}"; do
         --description "$DESCRIPTION" \
         --query id -o tsv 2>&1); then
 
-    # Set the signed-in user as owner
+    # Set the specified user as owner
     az ad group owner add \
       --group "$GROUP_ID" \
       --owner-object-id "$OWNER_ID" \
       --only-show-errors
 
-    echo -e " ${GREEN}CREATED (Id: ${GROUP_ID})${RESET}"
+    echo -e " ${GREEN}CREATED (Id: ${GROUP_ID}  Owner: ${OWNER_UPN})${RESET}"
     (( CREATED++ )) || true
   else
     echo -e " ${RED}FAILED${RESET}"
