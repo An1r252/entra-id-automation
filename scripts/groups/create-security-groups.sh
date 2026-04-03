@@ -41,19 +41,32 @@ log() {
 }
 # ─────────────────────────────────────────────────────────────
 
-echo -e "\n${CYAN}[AUTH] Logging in to Azure...${RESET}"
 log "INFO" "Script started"
-log "INFO" "Logging in to Azure..."
 
-if ! az login --use-device-code --allow-no-subscriptions; then
-  echo -e "${RED}[AUTH] Login failed. Exiting.${RESET}"
-  log "ERROR" "Azure login failed. Exiting."
-  exit 1
+# ── Auth check ───────────────────────────────────────────────
+echo -e "\n${CYAN}[AUTH] Checking Azure login status...${RESET}"
+log "INFO" "Checking Azure login status..."
+
+SIGNED_IN_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || true)
+
+if [[ -n "$SIGNED_IN_UPN" ]]; then
+  echo -e "${GREEN}[AUTH] Already logged in as: ${SIGNED_IN_UPN}${RESET}\n"
+  log "INFO" "Already logged in as: ${SIGNED_IN_UPN}"
+else
+  echo -e "${YELLOW}[AUTH] Not logged in. Initiating login...${RESET}"
+  log "INFO" "Not logged in. Initiating Azure login..."
+
+  if ! az login --use-device-code --allow-no-subscriptions; then
+    echo -e "${RED}[AUTH] Login failed. Exiting.${RESET}"
+    log "ERROR" "Azure login failed. Exiting."
+    exit 1
+  fi
+
+  SIGNED_IN_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || echo "unknown")
+  echo -e "${GREEN}[AUTH] Logged in as: ${SIGNED_IN_UPN}${RESET}\n"
+  log "INFO" "Logged in as: ${SIGNED_IN_UPN}"
 fi
-
-SIGNED_IN_UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || echo "unknown")
-echo -e "${GREEN}[AUTH] Logged in as: ${SIGNED_IN_UPN}${RESET}\n"
-log "INFO" "Logged in as: ${SIGNED_IN_UPN}"
+# ─────────────────────────────────────────────────────────────
 
 # Counters
 CREATED=0; SKIPPED=0; FAILED=0
