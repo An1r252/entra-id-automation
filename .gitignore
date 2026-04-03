@@ -1,0 +1,34 @@
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Secrets / credentials ────────────────────────────────────
+*.env
+.env*
+*.key
+*.pem
+*.pfx
+*.p12
+secrets/
+credentials/
+
+# ── Azure CLI ────────────────────────────────────────────────
+.azure/
+accessTokens.json
+
+# ── PowerShell ───────────────────────────────────────────────
+*.ps1xml
+# Exclude local profile overrides but keep shared scripts
+profile.ps1
+
+# ── Logs & output ────────────────────────────────────────────
+*.log
+output/
+logs/
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
