@@ -142,17 +142,22 @@ while IFS=',' read -r OLD_NAME NEW_NAME; do
   echo -e "  Renaming group (Id: ${GROUP_ID})..."
   log "INFO" "  Renaming group (Id: ${GROUP_ID}) to '${NEW_NAME}' (mailNickname: ${NEW_MAIL_NICK})"
 
-  if az rest \
+  RENAME_ERROR=$(az rest \
       --method PATCH \
       --uri "https://graph.microsoft.com/v1.0/groups/${GROUP_ID}" \
+      --headers "Content-Type=application/json" \
       --body "{\"displayName\": \"${NEW_NAME}\", \"mailNickname\": \"${NEW_MAIL_NICK}\"}" \
-      --only-show-errors 2>/dev/null; then
+      2>&1)
+  RENAME_EXIT=$?
+
+  if [[ $RENAME_EXIT -eq 0 ]]; then
     echo -e "  ${GREEN}SUCCESS — Renamed '${OLD_NAME}' → '${NEW_NAME}'${RESET}"
     log "INFO" "  SUCCESS — Renamed '${OLD_NAME}' → '${NEW_NAME}'"
     (( RENAMED++ )) || true
   else
     echo -e "  ${RED}FAILED — could not rename group '${OLD_NAME}'${RESET}"
-    log "ERROR" "  FAILED — could not rename group '${OLD_NAME}' (Id: ${GROUP_ID})"
+    echo -e "  ${RED}Error: ${RENAME_ERROR}${RESET}"
+    log "ERROR" "  FAILED — could not rename group '${OLD_NAME}' (Id: ${GROUP_ID}). Error: ${RENAME_ERROR}"
     (( FAILED++ )) || true
   fi
 
