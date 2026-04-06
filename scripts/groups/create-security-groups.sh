@@ -97,14 +97,26 @@ for ENTRY in "${GROUPS[@]}"; do
 
   log "INFO" "  Group does not exist, proceeding with creation."
 
-  # Resolve owner UPN to Object ID
+  # Resolve owner UPN to Object ID (timeout after 15 seconds)
   echo -e "  Resolving owner: ${OWNER_UPN}..."
   log "INFO" "  Resolving owner UPN: ${OWNER_UPN}"
-  OWNER_ID=$(az ad user show --id "$OWNER_UPN" --query id -o tsv 2>/dev/null || true)
 
-  if [[ -z "$OWNER_ID" ]]; then
+  OWNER_RESOLVE=$(timeout 15 az ad user show --id "$OWNER_UPN" --query id -o tsv 2>&1)
+  OWNER_EXIT=$?
+
+  if [[ $OWNER_EXIT -eq 124 ]]; then
+    echo -e "  ${RED}FAILED — timed out resolving owner: ${OWNER_UPN}${RESET}"
+    log "ERROR" "  FAILED — timed out resolving owner: ${OWNER_UPN}"
+    (( FAILED++ )) || true
+    continue
+  fi
+
+  OWNER_ID=$(echo "$OWNER_RESOLVE" | tr -d '[:space:]')
+
+  if [[ -z "$OWNER_ID" || "$OWNER_EXIT" -ne 0 ]]; then
     echo -e "  ${RED}FAILED — owner not found: ${OWNER_UPN}${RESET}"
-    log "ERROR" "  FAILED — owner not found: ${OWNER_UPN}"
+    echo -e "  ${RED}Error: ${OWNER_RESOLVE}${RESET}"
+    log "ERROR" "  FAILED — owner not found: ${OWNER_UPN}. Error: ${OWNER_RESOLVE}"
     (( FAILED++ )) || true
     continue
   fi
