@@ -97,26 +97,55 @@ for ENTRY in "${GROUPS[@]}"; do
 
   log "INFO" "  Group does not exist, proceeding with creation."
 
-  # Resolve owner UPN to Object ID (timeout after 15 seconds)
+  # Resolve owner UPN to Object ID
   echo -e "  Resolving owner: ${OWNER_UPN}..."
   log "INFO" "  Resolving owner UPN: ${OWNER_UPN}"
 
-  OWNER_RESOLVE=$(timeout 15 az ad user show --id "$OWNER_UPN" --query id -o tsv 2>&1)
+  # Run in background with a manual 20-second timeout (works on Windows Git Bash, macOS, Linux)
+  az ad user show --id "$OWNER_UPN" > /tmp/owner_out.txt 2>&1 &
+  AZ_PID=$!
+
+  ELAPSED=0
+  while kill -0 "$AZ_PID" 2>/dev/null; do
+    sleep 1
+    (( ELAPSED++ )) || true
+    if [[ $ELAPSED -ge 20 ]]; then
+      kill "$AZ_PID" 2>/dev/null || true
+      echo -e "  ${RED}FAILED — timed out (20s) resolving owner: ${OWNER_UPN}${RESET}"
+      echo -e "  ${RED}Check that the UPN is correct and you have User.Read.All permission${RESET}"
+      log "ERROR" "  FAILED — timed out resolving owner: ${OWNER_UPN}"
+      break
+    fi
+  done
+
+  wait "$AZ_PID" 2>/dev/null
   OWNER_EXIT=$?
 
-  if [[ $OWNER_EXIT -eq 124 ]]; then
-    echo -e "  ${RED}FAILED — timed out resolving owner: ${OWNER_UPN}${RESET}"
-    log "ERROR" "  FAILED — timed out resolving owner: ${OWNER_UPN}"
+  OWNER_RESOLVE=$(cat /tmp/owner_out.txt 2>/dev/null || true)
+  rm -f /tmp/owner_out.txt
+
+  log "INFO" "  az ad user show exit code: ${OWNER_EXIT}, elapsed: ${ELAPSED}s"
+  log "INFO" "  az ad user show raw output: ${OWNER_RESOLVE}"
+
+  if [[ $ELAPSED -ge 20 ]]; then
     (( FAILED++ )) || true
     continue
   fi
 
-  OWNER_ID=$(echo "$OWNER_RESOLVE" | tr -d '[:space:]')
-
-  if [[ -z "$OWNER_ID" || "$OWNER_EXIT" -ne 0 ]]; then
-    echo -e "  ${RED}FAILED — owner not found: ${OWNER_UPN}${RESET}"
+  if [[ $OWNER_EXIT -ne 0 ]]; then
+    echo -e "  ${RED}FAILED — error resolving owner: ${OWNER_UPN}${RESET}"
     echo -e "  ${RED}Error: ${OWNER_RESOLVE}${RESET}"
-    log "ERROR" "  FAILED — owner not found: ${OWNER_UPN}. Error: ${OWNER_RESOLVE}"
+    log "ERROR" "  FAILED — error resolving owner. Error: ${OWNER_RESOLVE}"
+    (( FAILED++ )) || true
+    continue
+  fi
+
+  OWNER_ID=$(echo "$OWNER_RESOLVE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || true)
+
+  if [[ -z "$OWNER_ID" ]]; then
+    echo -e "  ${RED}FAILED — could not parse owner Object ID for: ${OWNER_UPN}${RESET}"
+    echo -e "  ${RED}Raw response: ${OWNER_RESOLVE}${RESET}"
+    log "ERROR" "  FAILED — could not parse owner Object ID. Raw: ${OWNER_RESOLVE}"
     (( FAILED++ )) || true
     continue
   fi
