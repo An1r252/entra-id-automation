@@ -101,21 +101,19 @@ for ENTRY in "${GROUPS[@]}"; do
   echo -e "  Resolving owner: ${OWNER_UPN}..."
   log "INFO" "  Resolving owner UPN: ${OWNER_UPN}"
 
-  OWNER_RESOLVE=$(az ad user show --id "$OWNER_UPN" 2>&1)
+  OWNER_ID=$(az ad user show --id "$OWNER_UPN" --query id -o tsv 2>&1)
   OWNER_EXIT=$?
 
   log "INFO" "  az ad user show exit code: ${OWNER_EXIT}"
-  log "INFO" "  az ad user show raw output: ${OWNER_RESOLVE}"
+  log "INFO" "  Owner ID resolved: ${OWNER_ID}"
 
   if [[ $OWNER_EXIT -ne 0 ]]; then
     echo -e "  ${RED}FAILED — error resolving owner: ${OWNER_UPN}${RESET}"
-    echo -e "  ${RED}Error: ${OWNER_RESOLVE}${RESET}"
-    log "ERROR" "  FAILED — error resolving owner. Error: ${OWNER_RESOLVE}"
+    echo -e "  ${RED}Error: ${OWNER_ID}${RESET}"
+    log "ERROR" "  FAILED — error resolving owner: ${OWNER_UPN}. Error: ${OWNER_ID}"
     (( FAILED++ )) || true
     continue
   fi
-
-  OWNER_ID=$(echo "$OWNER_RESOLVE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || true)
 
   if [[ -z "$OWNER_ID" ]]; then
     echo -e "  ${RED}FAILED — could not parse owner Object ID for: ${OWNER_UPN}${RESET}"
