@@ -101,36 +101,11 @@ for ENTRY in "${GROUPS[@]}"; do
   echo -e "  Resolving owner: ${OWNER_UPN}..."
   log "INFO" "  Resolving owner UPN: ${OWNER_UPN}"
 
-  # Run in background with a manual 20-second timeout (works on Windows Git Bash, macOS, Linux)
-  az ad user show --id "$OWNER_UPN" > /tmp/owner_out.txt 2>&1 &
-  AZ_PID=$!
-
-  ELAPSED=0
-  while kill -0 "$AZ_PID" 2>/dev/null; do
-    sleep 1
-    (( ELAPSED++ )) || true
-    if [[ $ELAPSED -ge 20 ]]; then
-      kill "$AZ_PID" 2>/dev/null || true
-      echo -e "  ${RED}FAILED — timed out (20s) resolving owner: ${OWNER_UPN}${RESET}"
-      echo -e "  ${RED}Check that the UPN is correct and you have User.Read.All permission${RESET}"
-      log "ERROR" "  FAILED — timed out resolving owner: ${OWNER_UPN}"
-      break
-    fi
-  done
-
-  wait "$AZ_PID" 2>/dev/null
+  OWNER_RESOLVE=$(az ad user show --id "$OWNER_UPN" 2>&1)
   OWNER_EXIT=$?
 
-  OWNER_RESOLVE=$(cat /tmp/owner_out.txt 2>/dev/null || true)
-  rm -f /tmp/owner_out.txt
-
-  log "INFO" "  az ad user show exit code: ${OWNER_EXIT}, elapsed: ${ELAPSED}s"
+  log "INFO" "  az ad user show exit code: ${OWNER_EXIT}"
   log "INFO" "  az ad user show raw output: ${OWNER_RESOLVE}"
-
-  if [[ $ELAPSED -ge 20 ]]; then
-    (( FAILED++ )) || true
-    continue
-  fi
 
   if [[ $OWNER_EXIT -ne 0 ]]; then
     echo -e "  ${RED}FAILED — error resolving owner: ${OWNER_UPN}${RESET}"
